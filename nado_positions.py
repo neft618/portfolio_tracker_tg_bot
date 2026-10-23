@@ -307,21 +307,21 @@ else:
                     f"Funding по позиции: "
                     f"{position['net_funding_payment']:+.4f} USDT0"
                 )
-                if chosen_subaccount_id is not None:
-                    schedule.every().day.at(
-                        "03:00", "Europe/Moscow"
-                    ).do(
-                        take_equity_snapshot,
-                        chosen_subaccount_id,
-                        get_total_equity,
-                    )
+if chosen_subaccount_id is not None:
+    schedule.every().day.at(
+         "03:00", "Europe/Moscow"
+    ).do(
+        take_equity_snapshot,
+        chosen_subaccount_id,
+        get_total_equity,
+    )
 
-                    print("\nСнимки equity запланированы ежедневно на 03:00 МСК.")
-                    print("Для остановки нажми Ctrl+C.")
+    print("\nСнимки equity запланированы ежедневно на 03:00 МСК.")
+    print("Для остановки нажми Ctrl+C.")
 
-                    try:
-                        while True:
-                            schedule.run_pending()
-                            time.sleep(1)
-                    except KeyboardInterrupt:
-                        print("\nПрограмма остановлена.")
+    try:
+        while True:
+            schedule.run_pending()
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nПрограмма остановлена.")
