@@ -10,6 +10,37 @@ from zoneinfo import ZoneInfo
 
 
 DB_PATH = Path(__file__).resolve().parent / "portfolio.db"
+
+def init_tracking_tables():
+    with closing(sqlite3.connect(DB_PATH)) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS wallets (
+                id INTEGER PRIMARY KEY,
+                source TEXT NOT NULL
+                    CHECK (source IN ('nado', 'solana')),
+                address TEXT NOT NULL,
+                label TEXT NOT NULL,
+                UNIQUE (source, address)
+            )
+        """)
+
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS tracked_subaccounts (
+                id INTEGER PRIMARY KEY,
+                wallet_id INTEGER NOT NULL,
+                subaccount TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                FOREIGN KEY (wallet_id)
+                    REFERENCES wallets(id)
+                    ON DELETE CASCADE
+            )
+        """)
+
+        connection.commit()
+
+
 def save_equity_snapshot(subaccount, equity):
     with closing(sqlite3.connect(DB_PATH)) as connection:
         connection.execute("""

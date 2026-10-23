@@ -1,7 +1,7 @@
 import os
 import time
 from pathlib import Path
-
+from storage import init_tracking_tables
 import requests
 from dotenv import load_dotenv
 
@@ -117,6 +117,8 @@ def handle_message(message):
 
 
 def main():
+    init_tracking_tables()
+
     offset = None
     print("Бот запущен. Напиши ему /start в Telegram.")
 
