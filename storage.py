@@ -37,8 +37,83 @@ def init_tracking_tables():
                     ON DELETE CASCADE
             )
         """)
-
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS equity_snapshots (
+                id INTEGER PRIMARY KEY,
+                subaccount TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                equity TEXT NOT NULL
+            )
+        """)
         connection.commit()
+
+def get_latest_equity_snapshot(subaccount):
+    with closing(sqlite3.connect(DB_PATH)) as connection:
+        return connection.execute("""
+            SELECT created_at, equity
+            FROM equity_snapshots
+            WHERE subaccount = ?
+            ORDER BY id DESC
+            LIMIT 1
+        """, (subaccount,)).fetchone()
+    
+def save_nado_wallet(address, label, accounts):
+    if not accounts:
+        raise ValueError("Выбери хотя бы один субаккаунт.")
+
+    address = address.lower()
+
+    with closing(sqlite3.connect(DB_PATH)) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+
+        with connection:
+            connection.execute("BEGIN IMMEDIATE")
+
+            connection.execute("""
+                INSERT INTO wallets (source, address, label)
+                VALUES ('nado', ?, ?)
+                ON CONFLICT(source, address)
+                DO UPDATE SET label = excluded.label
+            """, (address, label))
+
+            wallet_id = connection.execute("""
+                SELECT id FROM wallets
+                WHERE source = 'nado' AND address = ?
+            """, (address,)).fetchone()[0]
+
+            connection.execute("""
+                DELETE FROM tracked_subaccounts
+                WHERE wallet_id = ?
+            """, (wallet_id,))
+
+            connection.executemany("""
+                INSERT INTO tracked_subaccounts (
+                    wallet_id, subaccount, name
+                )
+                VALUES (?, ?, ?)
+            """, [
+                (
+                    wallet_id,
+                    account["subaccount"],
+                    account["subaccount_name"],
+                )
+                for account in accounts
+            ])
+
+
+def get_tracked_nado():
+    with closing(sqlite3.connect(DB_PATH)) as connection:
+        connection.row_factory = sqlite3.Row
+
+        rows = connection.execute("""
+            SELECT w.label, w.address, s.subaccount, s.name
+            FROM wallets AS w
+            JOIN tracked_subaccounts AS s ON s.wallet_id = w.id
+            WHERE w.source = 'nado'
+            ORDER BY w.id, s.id
+        """).fetchall()
+
+    return [dict(row) for row in rows]
 
 
 def save_equity_snapshot(subaccount, equity):
@@ -94,7 +169,7 @@ def take_equity_snapshot(subaccount, get_equity):
 
             if attempt == 3:
                 print("Снимок не удалось сохранить. Проверь ошибку.")
-                return
+                return False
 
             sleep(30)
 
@@ -105,7 +180,7 @@ def take_equity_snapshot(subaccount, get_equity):
 
     if previous is None:
         print("Это первый снимок этого субаккаунта.")
-        return
+        return True
 
     previous_timestamp, previous_equity_text = previous
     previous_equity = Decimal(previous_equity_text)
@@ -126,3 +201,4 @@ def take_equity_snapshot(subaccount, get_equity):
     if previous_equity > 0:
         change_percent = change / previous_equity * Decimal("100")
         print(f"Изменение в процентах: {change_percent:+.2f}%")
+    return True
