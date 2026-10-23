@@ -2,6 +2,8 @@ import requests
 from decimal import Decimal
 
 url = "https://api.prod.nado.xyz/archive/v1"
+instruments_url = "https://api.prod.nado.xyz/gateway/v1/query"
+
 wallet_address = input("Введите адрес кошелька: ").strip()
 X18_FIELDS = [
     "amount",
@@ -71,11 +73,32 @@ def open_positions(chosen_subaccount_id):
             position[field] = from_x18(position[field])
     return result["positions"]
 
-
+# Преобразование чисел из формата с 18 десятичными знаками в обычный формат
 def from_x18(value): 
     return Decimal(value) / Decimal(10**18)
 
+def get_instruments():
+    params = {
+        "type": "symbols"
+    }
+    response = requests.get(instruments_url, params=params, timeout=15)
+    response.raise_for_status()
+    result = response.json()
+    # Проверка успешности запроса и наличия данных
+    if result.get("status") != "success":
+        raise ValueError(f"Nado вернул ошибку: {result.get('error')}")
 
+    if "data" not in result or "symbols" not in result["data"]:
+        raise ValueError("Неожиданный ответ API: нет справочника symbols.")
+    # Получение справочника инструментов
+    symbols = result["data"]["symbols"]
+    instruments_by_id = {}
+    # Создание словаря инструментов по product_id
+    for instrument in symbols.values():
+        product_id = instrument["product_id"]
+        instruments_by_id[product_id] = instrument
+
+    return instruments_by_id
 
 
 
@@ -90,12 +113,20 @@ else:
     if not positions:
         print("Открытых позиций нет.")
     else:
+        instruments_by_id = get_instruments()
         for position in positions:
             direction = "LONG" if position["direction"] else "SHORT"
             margin = "ISOLATED" if position["isolated"] else "CROSS"
+            instrument = instruments_by_id.get(position["product_id"])
+
+            if instrument is None:
+                print(f"Инструмент с product_id {position['product_id']} не найден.")
+                continue
+            if instrument["type"] != "perp":
+                continue  # Пропуск инструментов, которые не являются perpetual
 
             print(
-                f"Инструмент: {position['product_id']} | {direction} | {margin}\n"
+                f"Инструмент: {instrument["symbol"]} | {direction} | {margin}\n"
                 f"Размер: {position['amount']:f}\n"
                 f"Средняя цена входа: {position['average_entry_price']:.8f}\n"
                 f"Реализованный P&L без комиссий: {position['realized_pnl']:+.4f} USDT0\n"
