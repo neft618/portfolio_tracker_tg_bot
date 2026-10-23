@@ -3,6 +3,21 @@ from decimal import Decimal
 
 url = "https://api.prod.nado.xyz/archive/v1"
 wallet_address = input("Введите адрес кошелька: ").strip()
+X18_FIELDS = [
+    "amount",
+    "max_amount",
+    "total_open_amount",
+    "total_close_amount",
+    "average_entry_price",
+    "average_exit_price",
+    "liquidated_amount",
+    "open_fee",
+    "close_fee",
+    "realized_pnl",
+    "net_funding_payment",
+    "net_interest_payment",
+    "net_entry_unrealized",
+]
 
 # Получение субаккаунтов для указанного адреса кошелька
 def get_subaccounts(wallet_address):
@@ -29,7 +44,7 @@ def chose_subaccount(wallet_address):
         return None, None
     
     for subaccount in subaccounts:
-        print(f"Субаккаунт: {subaccount['subaccount_name']}", f"Идентификатор: {subaccount['subaccount']}")
+        print(f"Субаккаунт: {subaccount['subaccount_name']}")
     chosen_subaccount = input("Введите имя субаккаунта для получения открытых позиций: ").strip()
     for subaccount in subaccounts:
         if subaccount['subaccount_name'] == chosen_subaccount:
@@ -51,11 +66,14 @@ def open_positions(chosen_subaccount_id):
     result = response.json()
     if "positions" not in result:
         raise ValueError("Неожиданный ответ API: нет поля positions.")
-
+    for position in result["positions"]:
+        for field in X18_FIELDS:
+            position[field] = from_x18(position[field])
     return result["positions"]
 
 
-
+def from_x18(value): 
+    return Decimal(value) / Decimal(10**18)
 
 
 
@@ -73,4 +91,13 @@ else:
         print("Открытых позиций нет.")
     else:
         for position in positions:
-            print(position)
+            direction = "LONG" if position["direction"] else "SHORT"
+            margin = "ISOLATED" if position["isolated"] else "CROSS"
+
+            print(
+                f"Инструмент: {position['product_id']} | {direction} | {margin}\n"
+                f"Размер: {position['amount']:f}\n"
+                f"Средняя цена входа: {position['average_entry_price']:.8f}\n"
+                f"Реализованный P&L без комиссий: {position['realized_pnl']:+.4f} USDT0\n"
+                f"Funding по позиции: {position['net_funding_payment']:+.4f} USDT0\n"
+            )
