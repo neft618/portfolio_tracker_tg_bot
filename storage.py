@@ -1,6 +1,5 @@
 import sqlite3
 import requests
-
 from contextlib import closing
 from datetime import datetime
 from decimal import Decimal
@@ -52,7 +51,7 @@ def init_tracking_tables():
             )
         """)
         connection.commit()
-        
+
 def save_solana_wallet(address, label):
     with closing(sqlite3.connect(DB_PATH)) as connection:
         with connection:
