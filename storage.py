@@ -45,7 +45,58 @@ def init_tracking_tables():
                 equity TEXT NOT NULL
             )
         """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
         connection.commit()
+        
+def save_solana_wallet(address, label):
+    with closing(sqlite3.connect(DB_PATH)) as connection:
+        with connection:
+            connection.execute("""
+                INSERT INTO wallets (source, address, label)
+                VALUES ('solana', ?, ?)
+                ON CONFLICT(source, address)
+                DO UPDATE SET label = excluded.label
+            """, (address, label))
+
+
+def get_solana_wallets():
+    with closing(sqlite3.connect(DB_PATH)) as connection:
+        connection.row_factory = sqlite3.Row
+
+        rows = connection.execute("""
+            SELECT address, label
+            FROM wallets
+            WHERE source = 'solana'
+            ORDER BY id
+        """).fetchall()
+
+    return [dict(row) for row in rows]
+
+
+def get_setting(key, default=""):
+    with closing(sqlite3.connect(DB_PATH)) as connection:
+        row = connection.execute(
+            "SELECT value FROM settings WHERE key = ?",
+            (key,),
+        ).fetchone()
+
+    return row[0] if row else default
+
+
+def set_setting(key, value):
+    with closing(sqlite3.connect(DB_PATH)) as connection:
+        with connection:
+            connection.execute("""
+                INSERT INTO settings (key, value)
+                VALUES (?, ?)
+                ON CONFLICT(key)
+                DO UPDATE SET value = excluded.value
+            """, (key, value))
 
 def get_latest_equity_snapshot(subaccount):
     with closing(sqlite3.connect(DB_PATH)) as connection:

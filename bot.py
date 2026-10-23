@@ -6,6 +6,10 @@ from storage import (
     save_nado_wallet,
     get_tracked_nado,
     take_equity_snapshot,
+    save_solana_wallet,
+    get_solana_wallets,
+    get_setting,
+    set_setting,
 )
 import requests
 from dotenv import load_dotenv
@@ -20,7 +24,10 @@ from nado_positions import (
     get_total_equity,
     build_account_summary,
 )
-
+from solana_positions import (
+    get_sol_balance,
+    build_solana_summary,
+)
 
 ENV_PATH = Path(__file__).resolve().parent / ".env"
 load_dotenv(ENV_PATH)
@@ -107,7 +114,7 @@ def send_summary(chat_id, text):
             },
         )
 
-def save_all_snapshots():
+def save_all_snapshots(notify=True):
     try:
         accounts = get_tracked_nado()
         saved = 0
@@ -144,34 +151,45 @@ def save_all_snapshots():
         print("Ошибка задания снимков:", type(error).__name__)
         text = "Не удалось выполнить сохранение снимков equity."
 
-    try:
-        send_summary(MY_CHAT_ID, text)
-    except RuntimeError:
-        print("Не удалось отправить результат сохранения снимков.")
+    if notify:
+        try:
+            send_summary(MY_CHAT_ID, text)
+        except RuntimeError:
+            print("Не удалось отправить результат сохранения снимков.")
+    else:
+        print(text)
 
 def show_menu():
     setup.clear()
-
-    has_wallets = bool(get_tracked_nado())
-    title = (
-        "Что добавим или изменим?"
-        if has_wallets
-        else "Что настроим?"
-    )
+    daily_time = get_setting("daily_summary_time") or "не задано"
 
     telegram_request("sendMessage", {
         "chat_id": MY_CHAT_ID,
-        "text": title,
+        "text": (
+            "Настройки портфеля. "
+            f"Время сводки: {daily_time} (МСК)."
+        ),
         "reply_markup": {
             "inline_keyboard": [
-                [{"text": "Сводка", "callback_data": "summary"}],
                 [{
-                    "text": "Solana — скоро",
+                    "text": "Сводка сейчас",
+                    "callback_data": "summary",
+                }],
+                [{
+                    "text": "Добавить / изменить Nado",
+                    "callback_data": "nado",
+                }],
+                [{
+                    "text": "Добавить Solana",
                     "callback_data": "solana",
                 }],
                 [{
                     "text": "Мои кошельки",
                     "callback_data": "wallets",
+                }],
+                [{
+                    "text": "Время ежедневной сводки",
+                    "callback_data": "summary_time",
                 }],
             ]
         },
@@ -179,26 +197,32 @@ def show_menu():
 
 
 def show_wallets():
-    rows = get_tracked_nado()
-
-    if not rows:
-        send_summary(
-            MY_CHAT_ID,
-            "Кошельков пока нет. Отправь /start.",
-        )
-        return
-
     lines = []
     previous_address = None
 
-    for row in rows:
+    for row in get_tracked_nado():
         if row["address"] != previous_address:
-            lines.extend(["", row["label"], row["address"]])
+            lines.extend([
+                "",
+                f"Nado — {row['label']}",
+                row["address"],
+            ])
             previous_address = row["address"]
 
         lines.append(f"  • {row['name']}")
 
-    send_summary(MY_CHAT_ID, "\n".join(lines).strip())
+    for wallet in get_solana_wallets():
+        lines.extend([
+            "",
+            f"Solana — {wallet['label']}",
+            wallet["address"],
+        ])
+
+    send_summary(
+        MY_CHAT_ID,
+        "\n".join(lines).strip()
+        or "Кошельков пока нет. Отправь /start.",
+    )
 
 def selection_keyboard():
     rows = []
@@ -247,71 +271,117 @@ def selection_keyboard():
 
     return {"inline_keyboard": rows}
 
-def send_all_summaries():
+def send_all_summaries(announce=True):
     accounts = get_tracked_nado()
+    sol_wallets = get_solana_wallets()
 
-    if not accounts:
+    if not accounts and not sol_wallets:
         send_summary(
             MY_CHAT_ID,
             "Сначала добавь кошельки через /start.",
         )
         return
 
-    send_summary(
-        MY_CHAT_ID,
-        "Собираю сводку по выбранным субаккаунтам…",
-    )
+    if announce:
+        send_summary(
+            MY_CHAT_ID,
+            "Собираю сводку Nado и Solana…",
+        )
 
     started = datetime.now(ZoneInfo("Europe/Moscow"))
     blocks = []
-    total = Decimal("0")
-    successful = 0
+    nado_total = Decimal("0")
+    nado_ok = 0
+    sol_ok = 0
 
     for account in accounts:
         try:
             text, equity = build_account_summary(account)
+            blocks.append(text)
+            nado_total += equity
+            nado_ok += 1
 
         except DATA_ERRORS as error:
-            print("Ошибка сводки:", type(error).__name__)
-
+            print("Ошибка Nado:", type(error).__name__)
             blocks.append(
-                f"{account['label']} / {account['name']}\n"
-                "Не удалось получить данные. Не включён в итог."
+                f"Nado — {account['label']} / {account['name']}\n"
+                "Данные недоступны; в итог не включён."
             )
-            continue
 
-        blocks.append(text)
-        total += equity
-        successful += 1
+    for wallet in sol_wallets:
+        try:
+            text, complete = build_solana_summary(wallet)
+            blocks.append(text)
+
+            if complete:
+                sol_ok += 1
+
+        except DATA_ERRORS as error:
+            print("Ошибка Solana:", type(error).__name__)
+            blocks.append(
+                f"Solana — {wallet['label']}\n"
+                "Данные недоступны."
+            )
 
     header = [
-        f"Nado — запрос от {started:%d.%m.%Y %H:%M} МСК",
-        f"Получено субаккаунтов: {successful}/{len(accounts)}",
+        f"Сводка — запрос от {started:%d.%m.%Y %H:%M} МСК"
     ]
 
-    if successful == len(accounts):
+    if accounts:
         header.append(
-            "Общий equity отслеживаемых субаккаунтов: "
-            f"{total:.2f} USDT0"
+            f"Nado: получено {nado_ok}/{len(accounts)} субаккаунтов."
         )
-    elif successful:
+
+        if nado_ok:
+            title = (
+                "Equity Nado"
+                if nado_ok == len(accounts)
+                else "Неполный equity Nado"
+            )
+            header.append(f"{title}: {nado_total:.2f} USDT0")
+        else:
+            header.append("Equity Nado недоступен.")
+
+    if sol_wallets:
         header.append(
-            f"Неполный итог equity: {total:.2f} USDT0"
+            f"Solana: полные балансы "
+            f"{sol_ok}/{len(sol_wallets)} кошельков."
         )
-    else:
-        header.append("Общий equity недоступен.")
+        header.append(
+            "SOL и токены показаны отдельно, в единицах активов."
+        )
 
     header.append(
-        "Изменение equity включает пополнения и выводы."
+        "Изменение equity учитывает пополнения и выводы."
     )
 
-    text = (
+    send_summary(
+        MY_CHAT_ID,
         "\n".join(header)
         + "\n\n"
-        + "\n\n──────────\n\n".join(blocks)
+        + "\n\n──────────\n\n".join(blocks),
     )
 
-    send_summary(MY_CHAT_ID, text)
+def scheduled_summary():
+    try:
+        send_all_summaries(announce=False)
+    except (RuntimeError,) + DATA_ERRORS as error:
+        print(
+            "Ошибка ежедневной сводки:",
+            type(error).__name__,
+        )
+
+
+def apply_summary_schedule():
+    schedule.clear("daily-summary")
+
+    daily_time = get_setting("daily_summary_time")
+
+    if daily_time:
+        schedule.every().day.at(
+            daily_time,
+            "Europe/Moscow",
+        ).do(scheduled_summary).tag("daily-summary")
 
 def handle_message(message):
     chat = message["chat"]
@@ -350,6 +420,72 @@ def handle_message(message):
             MY_CHAT_ID,
             "Команды: /start, /wallets, /summary, /snapshot, /cancel, /test.",
         )
+        return
+
+    if setup.get("step") == "summary_time":
+        if text.lower() == "выкл":
+            daily_time = ""
+
+        elif re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", text):
+            daily_time = text
+
+        else:
+            send_summary(
+                MY_CHAT_ID,
+                "Введи время ЧЧ:ММ, например 08:30, или выкл.",
+            )
+            return
+
+        set_setting("daily_summary_time", daily_time)
+        apply_summary_schedule()
+        setup.clear()
+
+        answer = (
+            f"Ежедневная сводка включена: {daily_time} МСК."
+            if daily_time
+            else "Ежедневная сводка отключена."
+        )
+
+        send_summary(MY_CHAT_ID, answer)
+        show_menu()
+        return
+
+    if setup.get("step") == "sol_address":
+        if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", text):
+            send_summary(
+                MY_CHAT_ID,
+                "Пришли корректный Solana-адрес или /cancel.",
+            )
+            return
+
+        # RPC дополнительно проверит формат адреса.
+        # Нулевой баланс допустим.
+        get_sol_balance(text)
+
+        setup.update({
+            "step": "sol_label",
+            "address": text,
+        })
+
+        send_summary(
+            MY_CHAT_ID,
+            "Как назовём кошелёк? До 60 символов.",
+        )
+        return
+
+    if setup.get("step") == "sol_label":
+        if len(text) > 60:
+            send_summary(
+                MY_CHAT_ID,
+                "Сократи название до 60 символов.",
+            )
+            return
+
+        save_solana_wallet(setup["address"], text)
+        setup.clear()
+
+        send_summary(MY_CHAT_ID, "Solana-кошелёк сохранён.")
+        show_menu()
         return
 
     # Шаг 1: ждём адрес.
@@ -472,9 +608,27 @@ def handle_callback(query):
         return
 
     if action == "solana":
+        setup.clear()
+        setup["step"] = "sol_address"
+
         send_summary(
             MY_CHAT_ID,
-            "Настройку Solana подключим следующим этапом.",
+            "Пришли Solana-адрес. Отмена: /cancel.",
+        )
+        return
+
+    if action == "summary_time":
+        setup.clear()
+        setup["step"] = "summary_time"
+
+        current = get_setting("daily_summary_time") or "не задано"
+
+        send_summary(
+            MY_CHAT_ID,
+            f"Сейчас: {current}.\n"
+            "Введи время ежедневной сводки по Москве: "
+            "например 08:30.\n"
+            "Для отключения отправь выкл.",
         )
         return
 
@@ -561,12 +715,19 @@ def main():
     init_tracking_tables()
 
     schedule.every().day.at(
-        "03:00", "Europe/Moscow"
-    ).do(save_all_snapshots)
+        "03:00",
+        "Europe/Moscow",
+    ).do(save_all_snapshots, notify=False)
+
+    apply_summary_schedule()
 
     offset = None
     print("Бот запущен. Отправь /start в Telegram.")
-    print("Снимки equity запланированы ежедневно на 03:00 МСК.")
+    print("Снимки Nado: 03:00 МСК.")
+    print(
+        "Ежедневная сводка:",
+        get_setting("daily_summary_time") or "отключена",
+    )
 
     while True:
         schedule.run_pending()
