@@ -3,6 +3,7 @@ from decimal import Decimal
 
 url = "https://api.prod.nado.xyz/archive/v1"
 instruments_url = "https://api.prod.nado.xyz/gateway/v1/query"
+tickers_url = "https://api.prod.nado.xyz/archive/v2/tickers"
 
 wallet_address = input("Введите адрес кошелька: ").strip()
 X18_FIELDS = [
@@ -77,6 +78,7 @@ def open_positions(chosen_subaccount_id):
 def from_x18(value): 
     return Decimal(value) / Decimal(10**18)
 
+# Получение справочника инструментов с Nado
 def get_instruments():
     params = {
         "type": "symbols"
@@ -100,6 +102,39 @@ def get_instruments():
 
     return instruments_by_id
 
+def get_tickers():
+    params = {"market": "perp"}
+
+    response = requests.get(tickers_url, params=params, timeout=15)
+    response.raise_for_status()
+    result = response.json(parse_float=Decimal)
+
+    tickers_by_id = {}
+
+    for ticker in result.values():
+        product_id = ticker["product_id"]
+        tickers_by_id[product_id] = ticker
+
+    return tickers_by_id
+
+   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # Блок выполнения 
@@ -114,6 +149,7 @@ else:
         print("Открытых позиций нет.")
     else:
         instruments_by_id = get_instruments()
+        tickers_by_id = get_tickers()
         for position in positions:
             direction = "LONG" if position["direction"] else "SHORT"
             margin = "ISOLATED" if position["isolated"] else "CROSS"
@@ -124,7 +160,7 @@ else:
                 continue
             if instrument["type"] != "perp":
                 continue  # Пропуск инструментов, которые не являются perpetual
-
+            ticker = tickers_by_id.get(position["product_id"])
             print(
                 f"Инструмент: {instrument["symbol"]} | {direction} | {margin}\n"
                 f"Размер: {position['amount']:f}\n"
@@ -132,3 +168,11 @@ else:
                 f"Реализованный P&L без комиссий: {position['realized_pnl']:+.4f} USDT0\n"
                 f"Funding по позиции: {position['net_funding_payment']:+.4f} USDT0\n"
             )
+            if ticker is None:
+                print("Последняя цена и изменение за 24ч: нет данных")
+            else:
+                last_price = ticker["last_price"]
+                change_24h = ticker["price_change_percent_24h"]
+
+                print(f"Последняя цена: {last_price:.8f} USDT0")
+                print(f"Изменение за 24ч: {change_24h:+.2f}%")
