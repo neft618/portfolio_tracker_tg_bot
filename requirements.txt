@@ -2,3 +2,4 @@ requests
 schedule>=1.2,<2
 pytz
 python-dotenv
+pybit==5.17.0

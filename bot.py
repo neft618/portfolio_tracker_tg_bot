@@ -28,6 +28,13 @@ from solana_positions import (
     get_sol_balance,
     build_solana_summary,
 )
+from bybit_positions import (
+    BYBIT_ERRORS,
+    bybit_enabled,
+    build_bybit_summary,
+)
+
+
 
 ENV_PATH = Path(__file__).resolve().parent / ".env"
 load_dotenv(ENV_PATH)
@@ -274,18 +281,20 @@ def selection_keyboard():
 def send_all_summaries(announce=True):
     accounts = get_tracked_nado()
     sol_wallets = get_solana_wallets()
+    use_bybit = bybit_enabled()
 
-    if not accounts and not sol_wallets:
+    if not accounts and not sol_wallets and not use_bybit:
         send_summary(
             MY_CHAT_ID,
-            "Сначала добавь кошельки через /start.",
+            "Сначала добавь кошельки через /start "
+            "или настрой Bybit в .env.",
         )
         return
 
     if announce:
         send_summary(
             MY_CHAT_ID,
-            "Собираю сводку Nado и Solana…",
+            "Собираю сводку…",
         )
 
     started = datetime.now(ZoneInfo("Europe/Moscow"))
@@ -322,7 +331,25 @@ def send_all_summaries(announce=True):
                 f"Solana — {wallet['label']}\n"
                 "Данные недоступны."
             )
+    if use_bybit:
+        try:
+            blocks.append(build_bybit_summary())
 
+        except BYBIT_ERRORS as error:
+            code = getattr(error, "status_code", None)
+
+            print(
+                "Ошибка Bybit:",
+                type(error).__name__,
+                "код:",
+                code,
+            )
+
+            blocks.append(
+                "Bybit\nДанные недоступны. "
+                "Проверь подключение и настройки API."
+            )
+            
     header = [
         f"Сводка — запрос от {started:%d.%m.%Y %H:%M} МСК"
     ]
