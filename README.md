@@ -1,4 +1,5 @@
-# Portfolio tracker
+# Bobby Watcher (Portfolio tracker)
+<img width="488" height="684" alt="8499b077a3088db8b10a9a036c62bdc1" src="https://github.com/user-attachments/assets/ffb2886b-051b-4d6d-8584-d932bfacdc2f" />
 
 Бот для проверки кошельков и позиций в Telegram. Идея — получать утром одну сводку, а не открывать каждый аккаунт вручную.
 
